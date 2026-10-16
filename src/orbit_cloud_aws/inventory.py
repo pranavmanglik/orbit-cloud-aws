@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 from typing import Any, Protocol, cast
 
 from aiobotocore.config import AioConfig
@@ -54,7 +54,9 @@ class AWSCloudInventory:
     """List AWS resources from one preconfigured Resource Explorer view.
 
     This adapter never configures indexes or views and never makes cloud mutations. Use a view
-    scoped to the inventory the application is authorized to see.
+    scoped to the inventory the application is authorized to see. The SDK client is created on
+    the first request, shared across bounded concurrent searches, and closed after active searches
+    drain when ``aclose()`` is called.
     """
 
     def __init__(
@@ -66,12 +68,13 @@ class AWSCloudInventory:
         self.config = config
         self._client_factory = client_factory or self._default_client_factory
         self._client: _AWSClient | None = None
-        self._client_stack: AsyncExitStack | None = None
+        self._client_context: _ClientContext | None = None
         self._client_lock = asyncio.Lock()
         self._condition = asyncio.Condition()
         self._semaphore = asyncio.Semaphore(config.max_concurrency)
         self._active = 0
         self._closing = False
+        self._close_failed = False
         self._closed = False
 
     def _default_client_factory(self) -> _ClientContext:
@@ -84,7 +87,10 @@ class AWSCloudInventory:
                 config=AioConfig(
                     connect_timeout=self.config.connect_timeout_seconds,
                     read_timeout=self.config.read_timeout_seconds,
-                    retries={"mode": "standard", "max_attempts": 3},
+                    retries={
+                        "mode": "standard",
+                        "total_max_attempts": self.config.retry_total_attempts,
+                    },
                 ),
             ),
         )
@@ -92,20 +98,16 @@ class AWSCloudInventory:
     @asynccontextmanager
     async def _use_client(self) -> AsyncIterator[_AWSClient]:
         async with self._condition:
-            if self._closing or self._closed:
+            if self._closing or self._close_failed or self._closed:
                 raise CloudOperationError("closed", "AWS inventory provider is closed.")
             self._active += 1
         try:
             async with self._semaphore:
                 async with self._client_lock:
                     if self._client is None:
-                        stack = AsyncExitStack()
-                        try:
-                            client = await stack.enter_async_context(self._client_factory())
-                        except BaseException:
-                            await stack.aclose()
-                            raise
-                        self._client_stack = stack
+                        context = self._client_factory()
+                        client = await context.__aenter__()
+                        self._client_context = context
                         self._client = client
                     client = self._client
                 yield client
@@ -182,7 +184,7 @@ class AWSCloudInventory:
             ) from None
 
     async def aclose(self) -> None:
-        """Drain active searches and close the SDK client exactly once."""
+        """Drain active searches and retry SDK cleanup after a failed close."""
         async with self._condition:
             if self._closed:
                 return
@@ -198,23 +200,29 @@ class AWSCloudInventory:
                 self._condition.notify_all()
                 raise
         try:
-            if self._client_stack is not None:
-                await self._client_stack.aclose()
+            context = self._client_context
+            if context is not None:
+                await context.__aexit__(None, None, None)
         except asyncio.CancelledError:
             async with self._condition:
                 self._closing = False
+                self._close_failed = True
                 self._condition.notify_all()
             raise
         except Exception:
             async with self._condition:
                 self._closing = False
+                self._close_failed = True
                 self._condition.notify_all()
             raise CloudOperationError(
                 "close-failed", "AWS SDK client could not be closed."
             ) from None
         async with self._condition:
+            self._client_context = None
+            self._client = None
             self._closed = True
             self._closing = False
+            self._close_failed = False
             self._condition.notify_all()
 
 

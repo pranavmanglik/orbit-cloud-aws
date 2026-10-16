@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+from aiobotocore.config import AioConfig
 from botocore.exceptions import ClientError
 from orbit_cloud import CloudInventoryQuery, CloudOperationError
 
@@ -60,6 +61,82 @@ class FakeClientContext:
 def make_provider(client: FakeClient) -> AWSCloudInventory:
     config = AWSCloudInventoryConfig(region_name="us-east-1", view_arn=VIEW)
     return AWSCloudInventory(config, client_factory=lambda: FakeClientContext(client))
+
+
+def test_configured_standard_retries_use_a_bounded_total_attempt_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use standard SDK backoff with an explicit total-attempt bound, including the first call."""
+
+    class FakeSession:
+        """Capture default client options without creating a network client."""
+
+        options: dict[str, Any] | None = None
+
+        def create_client(self, service: str, **kwargs: Any) -> FakeClientContext:
+            """Record the service and retry configuration supplied by the adapter."""
+            self.options = {"service": service, **kwargs}
+            return FakeClientContext(FakeClient())
+
+    session = FakeSession()
+    monkeypatch.setattr("orbit_cloud_aws.inventory.get_session", lambda: session)
+    config = AWSCloudInventoryConfig(
+        region_name="us-east-1",
+        view_arn=VIEW,
+        retry_total_attempts=4,
+    )
+    provider = AWSCloudInventory(config)
+
+    provider._default_client_factory()
+
+    assert session.options is not None
+    assert session.options["service"] == "resource-explorer-2"
+    sdk_config = session.options["config"]
+    assert isinstance(sdk_config, AioConfig)
+    assert sdk_config.retries == {"mode": "standard", "total_max_attempts": 4}
+
+
+@pytest.mark.parametrize("attempts", [0, 11, True])
+def test_retry_total_attempts_rejects_unbounded_or_ambiguous_values(attempts: object) -> None:
+    """Require a strict bounded integer for provider retry behavior."""
+    with pytest.raises(ValueError):
+        AWSCloudInventoryConfig(
+            region_name="us-east-1",
+            view_arn=VIEW,
+            retry_total_attempts=attempts,
+        )
+
+
+@pytest.mark.asyncio
+async def test_failed_client_close_retains_context_for_retry() -> None:
+    """A failed SDK exit cannot discard the only handle capable of retrying cleanup."""
+    client = FakeClient()
+
+    class FailOnceContext(FakeClientContext):
+        close_calls = 0
+
+        async def __aexit__(self, *args: object) -> None:
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise RuntimeError("temporary SDK close failure")
+            await super().__aexit__(*args)
+
+    context = FailOnceContext(client)
+    provider = AWSCloudInventory(
+        AWSCloudInventoryConfig(region_name="us-east-1", view_arn=VIEW),
+        client_factory=lambda: context,
+    )
+    await provider.list_resources(CloudInventoryQuery(scope=VIEW))
+
+    with pytest.raises(CloudOperationError, match="could not be closed"):
+        await provider.aclose()
+    with pytest.raises(CloudOperationError, match="closed"):
+        await provider.list_resources(CloudInventoryQuery(scope=VIEW))
+
+    await provider.aclose()
+    await provider.aclose()
+    assert client.closed
+    assert context.close_calls == 2
 
 
 @pytest.mark.asyncio

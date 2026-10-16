@@ -27,7 +27,12 @@ _VIEW_ARN = re.compile(
 
 
 class AWSCloudInventoryConfig(BaseModel):
-    """Settings for one AWS Resource Explorer view; credentials use the SDK chain."""
+    """Bounded settings for one AWS Resource Explorer view.
+
+    The adapter uses the standard aiobotocore credential chain and never accepts credentials in
+    this model. ``region_name`` selects the API endpoint; the view ARN must identify an already
+    configured view.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 
@@ -37,6 +42,12 @@ class AWSCloudInventoryConfig(BaseModel):
     read_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     request_timeout_seconds: float = Field(default=90.0, gt=0, le=900)
     max_concurrency: int = Field(default=8, ge=1, le=32)
+    retry_total_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum AWS SDK attempts per request, including the initial attempt.",
+    )
 
     @field_validator("region_name")
     @classmethod

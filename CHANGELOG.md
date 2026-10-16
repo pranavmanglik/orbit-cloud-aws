@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `orbit-cloud-aws` are recorded here. This project is pre-alpha; APIs may change before a stable release.
+All notable changes to `orbit-cloud-aws` are recorded here. This project is in alpha; APIs may change before a stable release.
 
 ## 0.1.0a1
 

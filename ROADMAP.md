@@ -1,6 +1,6 @@
 # Roadmap
 
-This pre-alpha adapter starts with read-only resource inventory through the provider inventory API.
+This alpha adapter starts with read-only resource inventory through the provider inventory API.
 
 ## Direction
 

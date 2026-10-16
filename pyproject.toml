@@ -15,7 +15,7 @@ dependencies = [
   "orbit-cloud>=0.2.0a1,<0.3",
 ]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3",
   "Typing :: Typed",
 ]
@@ -41,3 +41,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.11"
 strict = true
 packages = ["orbit_cloud_aws"]
+
+[[tool.mypy.overrides]]
+module = ["aiobotocore.*", "botocore.*"]
+ignore_missing_imports = true

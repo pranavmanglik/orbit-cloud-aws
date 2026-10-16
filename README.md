@@ -4,7 +4,7 @@ Lists AWS resources from an existing AWS Resource Explorer view using an asynchr
 
 This is the `AWS Resource Explorer `Search` API` adapter for the provider-neutral [`orbit-cloud`](https://github.com/orbit-projects/orbit-cloud) capability. It performs **read-only inventory**. It never provisions, modifies, or deletes cloud resources.
 
-**Status:** pre-alpha. Contract tests use fake SDK clients and need no cloud credentials. No hosted CI, live-provider, production, support, or release-readiness claim is implied.
+**Status:** unpublished v0.1.0-alpha review candidate. Contract tests use fake SDK clients and need no cloud credentials. No hosted CI, live-provider, production, support, or release-readiness claim is implied.
 
 ## Install
 
@@ -27,11 +27,11 @@ provider = AWSCloudInventory(
 try:
     page = await provider.list_resources(
         CloudInventoryQuery(
-        scope="arn:aws:resource-explorer-2:us-east-1:123456789012:view/Inventory/unique-id",
-        resource_types=("ec2:instance",),
-        locations=("us-east-1",),
-        page_size=100,
-    )
+            scope="arn:aws:resource-explorer-2:us-east-1:123456789012:view/Inventory/unique-id",
+            resource_types=("ec2:instance",),
+            locations=("us-east-1",),
+            page_size=100,
+        )
     )
     for resource in page.resources:
         print(resource.resource_type, resource.resource_id)
